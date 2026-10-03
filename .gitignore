@@ -50,3 +50,7 @@ desktop.ini
 
 # nested git repos inside this project
 _samples/
+
+# Meta Spatial SDK sample sources - not my code, pull from the Meta repo instead
+_kt/
+_samples/
