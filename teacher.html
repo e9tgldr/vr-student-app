@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vr-guardian — Багшийн самбар</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1118; color: #dbe4ff; min-height: 100vh;
+    font-family: 'Segoe UI', Arial, sans-serif; padding: 18px 22px;
+  }
+  h1 { font-size: 22px; color: #4cc3ff; letter-spacing: 0.5px; }
+  .sub { color: #8fa0c0; font-size: 13px; margin-top: 2px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .statusbar {
+    display: flex; gap: 14px; align-items: center; margin: 16px 0;
+    padding: 12px 16px; background: #121a2a; border: 1px solid #1f2b45; border-radius: 10px;
+  }
+  .pulse { width: 12px; height: 12px; border-radius: 50%; background: #555f70; flex: none; }
+  .pulse.on  { background: #22e08a; animation: pulse 1.2s infinite; }
+  .pulse.off { background: #ff5a5a; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .statusbar b { font-size: 15px; }
+  .statusbar .meta { color: #8fa0c0; font-size: 13px; margin-left: auto; }
+  h2 { font-size: 15px; color: #4cc3ff; margin: 18px 0 10px; display: flex; align-items: center; gap: 10px; }
+  h2 .count { color: #8fa0c0; font-size: 13px; font-weight: 400; }
+  h2 button { margin-left: auto; font-size: 12px; padding: 5px 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .card {
+    background: #121a2a; border: 1px solid #1f2b45; border-radius: 10px; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .card.live { border-color: #1c5c3c; }
+  .card .name { font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .card .app  { color: #8fa0c0; font-size: 12.5px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #555f70; flex: none; }
+  .dot.on { background: #22e08a; animation: pulse 1.2s infinite; }
+  .dot.off { background: #ff5a5a; }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; width: fit-content; }
+  .tag.duty { background: #10361f; color: #22e08a; }
+  .tag.blocked { background: #3a0f14; color: #ff5a5a; }
+  .tag.idle { background: #1c2333; color: #8fa0c0; }
+  .btnrow { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; }
+  button {
+    font-family: inherit; font-size: 13px; padding: 7px 12px; border-radius: 8px;
+    border: 1px solid #2a3564; cursor: pointer; background: #1b2438; color: #dbe4ff;
+  }
+  button:hover { background: #243050; }
+  button.block { background: #4a1219; border-color: #7a1420; color: #ffb3b3; }
+  button.block:hover { background: #5d1620; }
+  button.allow { background: #0f3a26; border-color: #1c5c3c; color: #a9f0cd; }
+  button.allow:hover { background: #145035; }
+  .master { display: flex; gap: 10px; margin: 6px 0 4px; }
+  .master button { padding: 10px 18px; font-size: 14px; font-weight: 600; }
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: #123a7a; color: #fff; padding: 10px 18px; border-radius: 8px;
+    font-size: 14px; display: none; z-index: 99;
+  }
+  .logbox {
+    margin-top: 10px; background: #10141f; border: 1px solid #1f2b45; border-radius: 10px;
+    padding: 12px 14px; font-size: 12.5px; color: #8fa0c0; line-height: 1.8;
+    max-height: 220px; overflow-y: auto;
+  }
+  .logbox .t { color: #55627e; margin-right: 8px; }
+  .logbox .who { color: #ffd34d; font-weight: 600; margin-right: 6px; }
+  .foot { margin-top: 16px; color: #55627e; font-size: 12px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>vr-guardian — Багшийн самбар</h1>
+  <div class="sub">Сурагчдын VR аппыг эндээс хянана — апп түгжих / нээх, хайлт шүүх, бүгдийг нэг дор</div>
+
+  <div class="statusbar">
+    <div class="pulse" id="pulse"></div>
+    <b id="conn">Сурагч холбогдоогүй</b>
+    <span class="meta" id="meta">…</span>
+  </div>
+
+  <h2>Сурагчид <span class="count" id="studcount"></span>
+    <button onclick="send({ action: 'forgetOffline' })">Холбогдоогүйг цэвэрлэх</button>
+  </h2>
+  <div class="grid" id="students"></div>
+
+  <h2>Бүгдийг нэг дор</h2>
+  <div class="master">
+    <button class="block" onclick="master(true)">🚫 БҮГДИЙГ ТҮГЖИХ</button>
+    <button class="allow" onclick="master(false)">✅ БҮГДИЙГ НЭЭХ</button>
+  </div>
+
+  <h2>Апп тус бүр</h2>
+  <div class="grid" id="apps"></div>
+
+  <h2>Хайлтын шүүлтүүр</h2>
+  <div class="grid" id="topics"></div>
+
+  <h2>Хайлтын түүх (шууд)</h2>
+  <div class="logbox" id="searchlog">Одоогоор хайлт байхгүй.</div>
+
+  <h2>Арга хэмжээний бүртгэл</h2>
+  <div class="logbox" id="events">Одоогоор бүртгэл байхгүй.</div>
+
+  <div class="foot">
+    Quest (USB): http://localhost:8000/student.html &nbsp;·&nbsp;Quest (Wi-Fi): https://IP:8443/student.html — сертификат accept хийнэ<br>
+    Олон толгой: толгой бүр дээр <code>?id=quest1&amp;name=Сурагч%201</code> нэмнэ (эсвэл автоматаар санамсаргүй id авна).
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var APPS = [
+  { id: 'calc',    name: 'Калькулятор',  hint: 'Математик хичээлийн апп' },
+  { id: 'notes',   name: 'Тэмдэглэл',    hint: 'Хичээлийн тэмдэглэл бичих' },
+  { id: 'browser', name: 'Интернет',     hint: 'Хяналттай сургалтын хөтөч' },
+  { id: 'game',    name: 'Тоглоом',      hint: 'Хичээлийн үед хориглосон' }
+];
+
+var TOPICS = [
+  { id: 'math',    name: 'математик дасгал' },
+  { id: 'history', name: 'Монгол түүх' },
+  { id: 'gamedl',  name: 'тоглоом татах' },
+  { id: 'tiktok',  name: 'TikTok' }
+];
+
+var APP_NAMES = {};
+APPS.forEach(function (a) { APP_NAMES[a.id] = a.name; });
+
+function $(id) { return document.getElementById(id); }
+
+function toast(msg) {
+  var t = $('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(function () { t.style.display = 'none'; }, 2200);
+}
+
+function appMeta(id) {
+  for (var i = 0; i < APPS.length; i++) { if (APPS[i].id === id) { return APPS[i]; } }
+  return null;
+}
+
+function appName(id) { return appMeta(id) ? appMeta(id).name : id; }
+
+function el(tag, cls, text) {
+  var n = document.createElement(tag);
+  if (cls) { n.className = cls; }
+  if (text !== undefined) { n.textContent = text; }
+  return n;
+}
+
+/* ---------- student cards (one per headset) ---------- */
+function renderStudents(s) {
+  var list = s.students || [];
+  var online = list.filter(function (st) { return st.online; }).length;
+  $('studcount').textContent = list.length ? '(' + online + ' идэвхтэй / ' + list.length + ' бүртгэлтэй)' : '';
+
+  var box = $('students');
+  box.innerHTML = '';
+  if (!list.length) {
+    box.appendChild(el('div', 'card', 'Одоогоор толгой холбогдоогүй — Quest дээр student.html нээнэ үү.'));
+    return;
+  }
+  list.forEach(function (st) {
+    var card = el('div', 'card' + (st.online ? ' live' : ''));
+    var nm = el('div', 'name');
+    nm.appendChild(el('span', 'dot ' + (st.online ? 'on' : 'off')));
+    nm.appendChild(document.createTextNode(st.name + ''));
+    card.appendChild(nm);
+
+    var ago = st.lastSeen ? Math.max(0, Math.round((Date.now() - st.lastSeen) / 1000)) : null;
+    card.appendChild(el('div', 'app', st.online
+      ? 'Идэвхтэй — сүүлд ' + ago + ' сек'
+      : (ago === null ? 'Хэзээ ч холбогдоогүй' : 'Сүүлд холбогдсон: ' + ago + ' сек өмнө')));
+
+    card.appendChild(el('div', 'app', 'Нээлттэй апп: ' + (st.currentApp ? appName(st.currentApp) : '—')));
+    if (!st.online) {
+      card.appendChild(el('div', 'tag idle', 'ХОЛБООГҮЙ'));
+    } else if (st.currentApp) {
+      var t = el('div', 'tag ' + (st.blockedCurrent ? 'blocked' : 'duty'));
+      t.textContent = st.blockedCurrent ? 'ХОРИГЛОСОН АПП НЭЭЛТТЭЙ' : 'ИДЭВХТЭЙ';
+      card.appendChild(t);
+    } else {
+      card.appendChild(el('div', 'tag idle', 'ЛОББИ'));
+    }
+    box.appendChild(card);
+  });
+}
+
+/* ---------- global rule cards ---------- */
+function ruleCard(name, hint, blocked, onToggle) {
+  var card = el('div', 'card');
+  card.appendChild(el('div', 'name', name));
+  if (hint) { card.appendChild(el('div', 'app', hint)); }
+  var tag = el('div', 'tag ' + (blocked ? 'blocked' : 'duty'));
+  tag.textContent = blocked ? 'ТҮГЖСЭН' : 'ЗӨВШӨӨРӨГДСӨН';
+  card.appendChild(tag);
+  var row = el('div', 'btnrow');
+  var b = el('button', blocked ? 'allow' : 'block', blocked ? 'Нээх' : 'Түгжих');
+  b.onclick = onToggle;
+  row.appendChild(b);
+  card.appendChild(row);
+  return card;
+}
+
+function renderRules(s) {
+  var blockedApps = s.blockedApps || (s.student ? s.student.blockedApps : []) || [];
+  var grid = $('apps');
+  grid.innerHTML = '';
+  APPS.forEach(function (a) {
+    var blocked = blockedApps.indexOf(a.id) !== -1;
+    grid.appendChild(ruleCard(a.name, a.hint, blocked, function () {
+      send({ action: blocked ? 'allow' : 'block', app: a.id });
+    }));
+  });
+
+  var tgrid = $('topics');
+  tgrid.innerHTML = '';
+  TOPICS.forEach(function (tp) {
+    var blocked = (s.blockedTopics || []).indexOf(tp.id) !== -1;
+    tgrid.appendChild(ruleCard(tp.name, null, blocked, function () {
+      send({ action: blocked ? 'allowTopic' : 'blockTopic', app: tp.id });
+    }));
+  });
+}
+
+/* ---------- logs ---------- */
+function renderEvents(s) {
+  var box = $('events');
+  if (!s.events || !s.events.length) { box.textContent = 'Одоогоор бүртгэл байхгүй.'; return; }
+  box.innerHTML = '';
+  s.events.slice().reverse().forEach(function (ev) {
+    var line = el('div');
+    if (ev.kind === 'violation') { line.style.color = '#ff5a5a'; line.style.fontWeight = '600'; }
+    else if (ev.kind === 'search') { line.style.color = '#7fd0ff'; }
+    else if (ev.kind === 'block') { line.style.color = '#ffd34d'; }
+    line.appendChild(el('span', 't', ev.t));
+    if (ev.name) { line.appendChild(el('span', 'who', ev.name + ':')); }
+    line.appendChild(document.createTextNode(ev.msg));
+    box.appendChild(line);
+  });
+}
+
+function renderSearches(s) {
+  var sl = $('searchlog');
+  if (!s.searches || !s.searches.length) { sl.textContent = 'Одоогоор хайлт байхгүй.'; return; }
+  sl.innerHTML = '';
+  s.searches.slice().reverse().forEach(function (r) {
+    var line = el('div');
+    if (r.blocked) { line.style.color = '#ff5a5a'; line.style.fontWeight = '600'; }
+    else { line.style.color = '#bfe0ff'; }
+    line.appendChild(el('span', 't', r.t));
+    if (r.name) { line.appendChild(el('span', 'who', r.name + ':')); }
+    line.appendChild(document.createTextNode((r.blocked ? 'ХОРИГЛОСОН хайлт: ' : 'Хайлт: ') + r.label));
+    sl.appendChild(line);
+  });
+}
+
+function render(s) {
+  var n = s.studentsOnline || 0;
+  var total = s.studentsTotal || (s.students ? s.students.length : 0);
+  var on = n > 0;
+  $('pulse').className = 'pulse ' + (on ? 'on' : 'off');
+  $('conn').textContent = on
+    ? n + ' сурагч VR-д идэвхтэй'
+    : 'Сурагч холбогдоогүй — Quest дээр student.html нээ';
+  $('meta').textContent = 'Бүртгэлтэй толгой: ' + total + ' · Дүрэм: ' +
+    ((s.blockedApps || []).length) + '/' + APPS.length + ' апп түгжсэн';
+
+  renderStudents(s);
+  renderRules(s);
+  renderEvents(s);
+  renderSearches(s);
+}
+
+function send(body) {
+  return fetch('/api/teacher', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j.ok) { toast(j.msg || 'Хийгдлээ'); render(j.state); }
+      else { toast('Алдаа: ' + (j.error || '?')); }
+    })
+    .catch(function () { toast('Сервертэй холбогдож чадсангүй'); });
+}
+
+function master(block) { send({ action: block ? 'blockAll' : 'allowAll' }); }
+
+function poll() {
+  fetch('/api/state').then(function (r) { return r.json(); }).then(render).catch(function () {});
+}
+
+render({ studentsOnline: 0, studentsTotal: 0, students: [], blockedApps: ['game'], blockedTopics: [], events: [], searches: [] });
+poll();
+setInterval(poll, 1200);
+</script>
+</body>
+</html>

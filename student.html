@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="mn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vr-guardian — Оюутны апп</title>
+<!-- Offline: A-Frame from this folder -->
+<script src="aframe.min.js"></script>
+</head>
+<body>
+<a-scene
+  loading-screen="dotsColor: #4cc3ff; backgroundColor: #0b0e15"
+  background="color: #0b0e15"
+  fog="type: linear; color: #0b0e15; near: 12; far: 30"
+  renderer="antialias: true; colorManagement: true"
+  vr-mode-ui="enabled: true"
+  device-orientation-permission-ui="enabled: false">
+
+  <a-entity id="camera" position="0 1.6 0" camera look-controls="pointerLockEnabled: false">
+    <a-cursor id="click-cursor" fuse="false"
+      raycaster="objects: .clickable"
+      geometry="primitive: ring; radiusInner: 0.012; radiusOuter: 0.018"
+      material="color: #4cc3ff; shader: flat"
+      position="0 0 -0.5"
+      animation__press="property: scale; startEvents: mousedown; easing: easeInCubic; dur: 120; to: 1.6 1.6 1.6"
+      animation__release="property: scale; startEvents: mouseup; easing: easeOutCubic; dur: 120; to: 1 1 1">
+    </a-cursor>
+  </a-entity>
+
+  <a-entity id="lhand" laser-controls="hand: left"
+    raycaster="objects: .clickable; lineColor: #4cc3ff; lineOpacity: 0.85"></a-entity>
+  <a-entity id="rhand" laser-controls="hand: right"
+    raycaster="objects: .clickable; lineColor: #4cc3ff; lineOpacity: 0.85"></a-entity>
+
+  <a-entity light="type: ambient; color: #cdd6e8; intensity: 1.15"></a-entity>
+  <a-entity light="type: point; color: #4cc3ff; intensity: 0.3; distance: 10" position="0 3.2 0"></a-entity>
+
+  <a-plane position="0 0 0" rotation="-90 0 0" width="40" height="40" material="color: #151a28; roughness: 1"></a-plane>
+  <a-ring color="#2ee6a8" radius-inner="0.28" radius-outer="0.4" rotation="-90 0 0" position="0 0.02 0" opacity="0.5"></a-ring>
+</a-scene>
+
+<div id="fatal-banner" style="display:none; position:fixed; left:0; right:0; bottom:0; z-index:9999; background:#7a1420; color:#fff; font:14px/1.4 Segoe UI, Arial; padding:10px 14px;"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  window.addEventListener('error', function (e) {
+    var b = document.getElementById('fatal-banner');
+    if (b) { b.style.display = 'block'; b.textContent = 'ERR: ' + (e.message || 'unknown') + ' @' + (e.lineno || '?'); }
+  });
+
+  AFRAME.registerComponent('canvas-label', {
+    schema: {
+      value: { default: '' },
+      color: { default: '#ffffff' },
+      width: { default: 2 },
+      align: { default: 'center', oneOf: ['left', 'center', 'right'] },
+      px: { default: 72 }
+    },
+    init: function () {
+      this.canvas = document.createElement('canvas');
+      this.texture = new THREE.CanvasTexture(this.canvas);
+      this.texture.anisotropy = 4;
+      if (THREE.SRGBColorSpace !== undefined) { this.texture.colorSpace = THREE.SRGBColorSpace; }
+      else if (THREE.sRGBEncoding !== undefined) { this.texture.encoding = THREE.sRGBEncoding; }
+      this.material = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, depthWrite: false });
+      this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.material);
+      this.el.setObject3D('label', this.mesh);
+      this.redraw();
+    },
+    update: function () { this.redraw(); },
+    remove: function () {
+      this.el.removeObject3D('label');
+      this.texture.dispose();
+      this.material.dispose();
+    },
+    redraw: function () {
+      var d = this.data;
+      var font = d.px + 'px "Segoe UI", Arial, sans-serif';
+      var lines = String(d.value).split('\n');
+      var c = this.canvas.getContext('2d');
+      c.font = font;
+      var textWidth = 4;
+      lines.forEach(function (line) { textWidth = Math.max(textWidth, Math.ceil(c.measureText(line).width)); });
+      var w = textWidth + 16;
+      var lineH = Math.ceil(d.px * 1.3);
+      var h = lines.length * lineH + 16;
+      this.canvas.width = w;
+      this.canvas.height = h;
+      c = this.canvas.getContext('2d');
+      c.clearRect(0, 0, w, h);
+      c.font = font;
+      c.fillStyle = d.color;
+      c.textBaseline = 'middle';
+      lines.forEach(function (line, i) {
+        var y = (i + 0.5) * lineH + 8;
+        if (d.align === 'left') { c.textAlign = 'left'; c.fillText(line, 6, y); }
+        else if (d.align === 'right') { c.textAlign = 'right'; c.fillText(line, w - 6, y); }
+        else { c.textAlign = 'center'; c.fillText(line, w / 2, y); }
+      });
+      this.texture.needsUpdate = true;
+      var pw = d.width;
+      var ph = d.width * (h / w);
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = new THREE.PlaneGeometry(pw, ph);
+      var ox = d.align === 'left' ? pw / 2 : (d.align === 'right' ? -pw / 2 : 0);
+      this.mesh.position.set(ox, 0, 0);
+    }
+  });
+
+  var APPS = {
+    calc:    { name: 'Калькулятор', color: '#1d4fd7', lines: ['3 + 4 = ?', '12 - 5 = ?', '6 x 3 = ?'] },
+    notes:   { name: 'Тэмдэглэл',   color: '#7a3ab9', lines: ['Хичээлийн тэмдэглэл', 'Өнөөдрийн сэдэв: Дүрэм', '(демо агуулга)'] },
+    browser: { name: 'Интернет',    color: '#0e7a5f', lines: ['Сургалтын хуудас ачааллагдлаа', 'Материал №7', '(хяналттай горим)'] },
+    game:    { name: 'Тоглоом',     color: '#b98900', lines: ['Тоглоом ажиллаж байна', 'Үе шат: 3', 'Оноо: 120'] }
+  };
+  var APP_ORDER = ['calc', 'notes', 'browser', 'game'];
+
+  var TOPICS = {
+    math:    { label: 'математик дасгал' },
+    history: { label: 'Монгол түүх' },
+    gamedl:  { label: 'тоглоом татах' },
+    tiktok:  { label: 'TikTok' }
+  };
+  var TOPIC_ORDER = ['math', 'history', 'gamedl', 'tiktok'];
+
+  var el = function (tag, attrs, parent) {
+    var node = document.createElement(tag);
+    Object.keys(attrs).forEach(function (k) { node.setAttribute(k, attrs[k]); });
+    if (parent) { parent.appendChild(node); }
+    return node;
+  };
+
+  var sceneEl = document.querySelector('a-scene');
+  var launcher = null, overlay = null, banner = null, bannerSub = null;
+  var searchScreen = null, resultLine = null;
+  var tileRefs = {};
+  var topicRefs = {};
+  var current = null;
+  var blockedMap = {};
+  var topicBlocked = {};
+  var bannerTimer = null;
+  var overlayBg = null, overlayTitle = null, overlayBody = null;
+
+  function heartbeat() {
+    fetch('/api/student', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app: current, sid: SID, name: SNAME || undefined })
+    }).catch(function () {});
+  }
+
+  function showBanner(sub, dur) {
+    if (!banner) { return; }
+    var subs = banner.querySelectorAll('[data-role="sub"]');
+    if (subs.length) { subs[0].setAttribute('canvas-label', 'value', sub); }
+    banner.setAttribute('visible', 'true');
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(function () { banner.setAttribute('visible', 'false'); }, dur || 2200);
+  }
+
+  function openApp(id) {
+    if (!APPS[id]) { return; }
+    if (blocked[id]) { beepDown(); showBanner('Багшийн зөвшөөрөл шаардлагатай', 1800); return; }
+    current = id;
+    heartbeat();
+    launcher.setAttribute('visible', 'false');
+    if (id === 'browser') {
+      searchScreen.setAttribute('visible', 'true');
+      resultLine.setAttribute('canvas-label', 'value', '');
+    } else {
+      overlayBg.setAttribute('material', 'color', APPS[id].color);
+      overlayTitle.setAttribute('canvas-label', { value: APPS[id].name, color: '#ffffff' });
+      overlayBody.setAttribute('canvas-label', 'value', APPS[id].lines.join('\n'));
+      overlay.setAttribute('visible', 'true');
+    }
+  }
+
+  function closeApp(auto) {
+    var wasOpen = current !== null;
+    current = null;
+    heartbeat();
+    overlay.setAttribute('visible', 'false');
+    searchScreen.setAttribute('visible', 'false');
+    launcher.setAttribute('visible', 'true');
+    if (auto && wasOpen) { beepDown(); showBanner('Багш түгжсэн тул апп хаагдлаа', 2600); }
+  }
+
+  function doSearch(topicId) {
+    if (!TOPICS[topicId]) { return; }
+    var isBlocked = topicBlocked[topicId];
+    if (resultLine) {
+      resultLine.setAttribute('canvas-label', {
+        value: isBlocked ? 'Хориатай хайлт — нээх боломжгүй' : 'Үр дүн: ' + TOPICS[topicId] + ' (демо)',
+        color: isBlocked ? '#ff5a5a' : '#e8eefc'
+      });
+    }
+    if (isBlocked) { beepDown(); showBanner('Багш зөвшөөрөхгүй!', 2200); }
+    fetch('/api/student', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app: 'browser', search: topicId, sid: SID, name: SNAME || undefined })
+    }).catch(function () {});
+  }
+
+  // ---- this headset's identity (stable across reloads, per-device) ----
+  function qs(key) {
+    try { return new URLSearchParams(location.search).get(key) || ''; } catch (e) { return ''; }
+  }
+  var SID = (function () {
+    var clean = function (v) { return String(v || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32); };
+    var v = clean(qs('id'));
+    try {
+      if (v) { localStorage.setItem('vr_sid', v); }
+      else { v = clean(localStorage.getItem('vr_sid')); }
+      if (!v) {
+        v = 'q' + Math.random().toString(36).slice(2, 6);
+        localStorage.setItem('vr_sid', v);
+      }
+    } catch (e) {
+      if (!v) { v = 'q-demo'; }
+    }
+    return v;
+  })();
+  var SNAME = String(qs('name') || '').slice(0, 24);
+
+  // ---- audio: short "denied" tone when the teacher blocks something ----
+  var actx = null;
+  function audioCtx() {
+    if (actx) { return actx; }
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      actx = AC ? new AC() : null;
+    } catch (e) { actx = null; }
+    return actx;
+  }
+  function armAudio() {
+    var c = audioCtx();
+    if (c && c.state === 'suspended') { c.resume(); }
+  }
+  function beepDown() {
+    var c = audioCtx();
+    if (!c) { return; }
+    if (c.state === 'suspended') { c.resume(); }
+    var t0 = c.currentTime;
+    [[520, 0], [330, 0.16]].forEach(function (p) {
+      var o = c.createOscillator(), g = c.createGain();
+      o.type = 'square';
+      o.frequency.value = p[0];
+      g.gain.setValueAtTime(0.0001, t0 + p[1]);
+      g.gain.exponentialRampToValueAtTime(0.16, t0 + p[1] + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + p[1] + 0.15);
+      o.connect(g); g.connect(c.destination);
+      o.start(t0 + p[1]); o.stop(t0 + p[1] + 0.18);
+    });
+  }
+  window.addEventListener('click', armAudio);
+  document.addEventListener('keydown', armAudio);
+
+  var blocked = {};
+
+  function renderTiles(serverList) {
+    APP_ORDER.forEach(function (id) {
+      var t = tiles[id];
+      if (!t) { return; }
+      var b = blocked[id];
+      t.bg.setAttribute('material', 'color', b ? '#4a5060' : APPS[id].color);
+      t.name.setAttribute('canvas-label', 'color', b ? '#aab3c5' : '#ffffff');
+      t.status.setAttribute('canvas-label', {
+        value: b ? 'хориглосон' : 'идэвхтэй',
+        color: b ? '#ff5a5a' : '#22e08a'
+      });
+    });
+  }
+
+  function renderTopics() {
+    TOPIC_ORDER.forEach(function (id) {
+      var r = topicRefs[id];
+      if (!r) { return; }
+      var b = topicBlocked[id];
+      r.bg.setAttribute('material', 'color', b ? '#4a5060' : '#17335e');
+      r.label.setAttribute('canvas-label', 'color', b ? '#ff9d9d' : '#bfe0ff');
+    });
+  }
+
+  function poll() {
+    fetch('/api/state').then(function (r) { return r.json(); }).then(function (s) {
+      APP_ORDER.forEach(function (id) { blocked[id] = s.student.blockedApps.indexOf(id) !== -1; });
+      TOPIC_ORDER.forEach(function (id) { topicBlocked[id] = (s.blockedTopics || []).indexOf(id) !== -1; });
+      if (current && blocked[current]) { closeApp(true); }
+      renderTiles();
+      renderTopics();
+    }).catch(function () {});
+    heartbeat();
+  }
+
+  // ---- build UI after scene load ----
+  var tiles = {};
+  function buildUI() {
+    var cam = document.getElementById('camera');
+    if (!cam) { return; }
+
+    launcher = el('a-entity', { id: 'launcher', position: '0 -0.06 -0.95' }, cam);
+    el('a-plane', {
+      width: '0.98', height: '0.70',
+      material: 'color: #10141f; shader: flat; transparent: true; opacity: 0.95'
+    }, launcher);
+    el('a-entity', {
+      'canvas-label': { value: 'Миний сургалт', color: '#e8eefc', width: 0.40, px: 56 },
+      position: '0 0.28 0.004'
+    }, launcher);
+
+    APP_ORDER.forEach(function (id, i) {
+      var col = i % 2, row = Math.floor(i / 2);
+      var x = col === 0 ? -0.245 : 0.245;
+      var y = row === 0 ? 0.065 : -0.165;
+      var tile = el('a-entity', { position: x + ' ' + y + ' 0.005' }, launcher);
+      var bg = el('a-plane', {
+        class: 'clickable',
+        width: '0.42', height: '0.25',
+        material: 'color: ' + APPS[id].color + '; shader: flat'
+      }, tile);
+      var name = el('a-entity', {
+        'canvas-label': { value: APPS[id].name, color: '#ffffff', width: 0.36, px: 52 },
+        position: '0 0.05 0.003'
+      }, tile);
+      var st = el('a-entity', {
+        'canvas-label': { value: 'идэвхтэй', color: '#22e08a', width: 0.24, px: 40 },
+        position: '0 -0.05 0.003'
+      }, tile);
+      tiles[id] = { bg: bg, name: name, status: st };
+      bg.addEventListener('click', function () { openApp(id); });
+    });
+
+    // ---- search screen (appears when Интернет app opens) ----
+    searchScreen = el('a-entity', { id: 'search-screen', visible: 'false', position: '0 -0.02 -1.0' }, cam);
+    el('a-plane', {
+      width: '1.5', height: '1.0',
+      material: 'color: #101a2e; shader: flat; transparent: true; opacity: 0.96'
+    }, searchScreen);
+    el('a-entity', {
+      'canvas-label': { value: 'Хайлт', color: '#e8eefc', width: 0.6, px: 60 },
+      position: '0 0.40 0.004'
+    }, searchScreen);
+
+    TOPIC_ORDER.forEach(function (id, i) {
+      var col = i % 2, row = Math.floor(i / 2);
+      var x = col === 0 ? -0.38 : 0.38;
+      var y = 0.17 - row * 0.17;
+      var chip = el('a-entity', { position: x + ' ' + y + ' 0.005' }, searchScreen);
+      var bg = el('a-plane', {
+        class: 'clickable',
+        width: '0.68', height: '0.13',
+        material: 'color: #17335e; shader: flat'
+      }, chip);
+      var label = el('a-entity', {
+        'canvas-label': { value: TOPICS[id].label, color: '#bfe0ff', width: 0.6, px: 48 },
+        position: '0 0 0.003'
+      }, chip);
+      topicRefs[id] = { bg: bg, label: label };
+      bg.addEventListener('click', function () { doSearch(id); });
+    });
+
+    resultLine = el('a-entity', {
+      'canvas-label': { value: '', color: '#e8eefc', width: 1.2, px: 44 },
+      position: '0 -0.20 0.004'
+    }, searchScreen);
+    var backBtn2 = el('a-entity', { position: '0 -0.40 0.005' }, searchScreen);
+    var backBg2 = el('a-plane', {
+      class: 'clickable', width: '0.42', height: '0.11',
+      material: 'color: #1f2940; shader: flat'
+    }, backBtn2);
+    el('a-entity', {
+      'canvas-label': { value: 'буцах', color: '#dbe4ff', width: 0.34, px: 48 },
+      position: '0 0 0.003'
+    }, backBg2);
+    backBg2.addEventListener('click', function () { closeApp(false); });
+
+    overlay = el('a-entity', { id: 'app-overlay', visible: 'false', position: '0 -0.02 -1.05' }, cam);
+    overlayBg = el('a-plane', { width: '1.7', height: '1.05', material: 'color: #1d4fd7; shader: flat' }, overlay);
+    overlayTitle = el('a-entity', {
+      'canvas-label': { value: 'Апп', color: '#ffffff', width: 0.9, px: 64 },
+      position: '0 0.40 0.004'
+    }, overlay);
+    overlayBody = el('a-entity', {
+      'canvas-label': { value: '', color: '#e8eefc', width: 1.0, px: 48 },
+      position: '0 0.02 0.004'
+    }, overlay);
+    var backBtn = el('a-entity', { position: '0 -0.42 0.005' }, overlay);
+    var backBg = el('a-plane', {
+      class: 'clickable', width: '0.42', height: '0.11',
+      material: 'color: #1f2940; shader: flat'
+    }, backBg);
+    el('a-entity', {
+      'canvas-label': { value: 'буцах', color: '#dbe4ff', width: 0.34, px: 48 },
+      position: '0 0 0.003'
+    }, backBg);
+    backBg.addEventListener('click', function () { closeApp(false); });
+
+    banner = el('a-entity', { id: 'block-banner', visible: 'false', position: '0 0 -0.88' }, cam);
+    el('a-plane', {
+      width: '1.7', height: '0.75',
+      material: 'color: #7a1420; shader: flat; transparent: true; opacity: 0.96'
+    }, banner);
+    el('a-entity', {
+      'canvas-label': { value: 'БАГШ ТҮГЖЛЭЭ', color: '#ffd34d', width: 0.85, px: 72 },
+      position: '0 0.14 0.004'
+    }, banner);
+    el('a-entity', {
+      'data-role': 'sub',
+      'canvas-label': { value: 'Апп автоматаар хаагдлаа', color: '#ffffff', width: 0.62, px: 48 },
+      position: '0 -0.14 0.004'
+    }, banner);
+  }
+
+  function syncCursor() {
+    var inVR = sceneEl0.is('vr-mode');
+    var cur = document.getElementById('click-cursor');
+    if (cur) { cur.setAttribute('visible', inVR ? 'false' : 'true'); }
+  }
+  var sceneEl0 = document.querySelector('a-scene');
+  sceneEl0.addEventListener('enter-vr', syncCursor);
+  sceneEl0.addEventListener('enter-vr', armAudio);
+  sceneEl0.addEventListener('exit-vr', syncCursor);
+
+  var built = false;
+  function buildOnce() {
+    if (built) { return; }
+    built = true;
+    buildUI();
+    renderTiles();
+    syncCursor();
+  }
+  if (sceneEl0.hasLoaded) { buildOnce(); } else {
+    sceneEl0.addEventListener('loaded', buildOnce);
+  }
+  poll();
+  setInterval(poll, 900);
+})();
+</script>
+</body>
+</html>
